@@ -1,42 +1,56 @@
-# collection-front
+# Bicoma — Frontend
 
-This template should help get you started developing with Vue 3 in Vite.
+SPA du gestionnaire de collection personnelle **Bicoma** (livres, films, séries, jeux).
+Construite avec **Vue 3**, **TypeScript**, **Vite**, **Vue Router** et **Pinia**, dans une
+esthétique « bibliothèque chaleureuse » avec mode sombre et clair.
 
-## Recommended IDE Setup
+L'API Laravel correspondante se trouve dans le dépôt `Bicoma-api`.
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+## Fonctionnalités
 
-## Recommended Browser Setup
+- Authentification (connexion / inscription) avec token Bearer
+- **Étagère** : grille de couvertures avec recherche en direct (debounce), filtres
+  (type, statut, note, tags) et chargement paresseux des images
+- Fiche détaillée, création et édition d'un élément
+- Suivi des prêts (retours, retards)
+- Import depuis Open Library / TMDB / RAWG avec ajout rapide
+- Tableau de bord de statistiques (graphiques CSS) et défi annuel
+- Recommandations personnalisées
+- Gestion des listes partagées et vue publique en lecture seule
+- Système de tokens de design, mode sombre/clair, interface responsive
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+## Prérequis
 
-## Type Support for `.vue` Imports in TS
+- Node.js 20.19+
+- L'API `Bicoma-api` en cours d'exécution
 
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
+## Installation
 
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
-
-```sh
+```bash
 npm install
+cp .env.example .env   # ajustez VITE_API_URL si nécessaire
 ```
 
-### Compile and Hot-Reload for Development
+Par défaut l'application cible `http://localhost:8000/api`.
 
-```sh
-npm run dev
+## Lancement
+
+```bash
+npm run dev        # serveur de développement (http://localhost:5173)
+npm run build      # build de production
+npm run type-check # vérification des types
 ```
 
-### Type-Check, Compile and Minify for Production
+## Structure
 
-```sh
-npm run build
+```
+src/
+  assets/main.css      tokens de design + styles de base
+  lib/                 client axios, types TypeScript
+  composables/         thème, toasts
+  stores/              Pinia (auth, items, tags, loans, stats)
+  components/          BaseIcon, ItemCard, RatingStars, ToastHost
+  layouts/AppLayout    coquille avec barre latérale
+  views/               écrans (étagère, import, prêts, stats, partage…)
+  router/              routes + garde d'authentification
 ```
