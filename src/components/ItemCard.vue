@@ -1,13 +1,19 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { Item } from '@/lib/types'
 import { TYPE_LABELS, STATUS_LABELS } from '@/lib/types'
+import { safeCoverUrl } from '@/lib/urls'
 import BaseIcon from '@/components/BaseIcon.vue'
 import RatingStars from '@/components/RatingStars.vue'
 
-const props = defineProps<{ item: Item }>()
+const props = withDefaults(defineProps<{ item: Item; readOnly?: boolean }>(), { readOnly: false })
 
+const imageFailed = ref(false),
+  cover = computed(() => safeCoverUrl(props.item.cover_url))
+watch(cover, () => {
+  imageFailed.value = false
+})
 const typeIcon = computed(
   () => ({ book: 'book', movie: 'film', series: 'tv', game: 'gamepad' })[props.item.type],
 )
@@ -22,11 +28,17 @@ const initials = computed(() =>
 </script>
 
 <template>
-  <RouterLink :to="{ name: 'item-detail', params: { id: item.id } }" class="item-card">
+  <component
+    :is="readOnly ? 'article' : RouterLink"
+    :to="readOnly ? undefined : { name: 'item-detail', params: { id: item.id } }"
+    class="item-card"
+    :class="{ 'item-card--readonly': readOnly }"
+  >
     <div class="cover" :style="{ '--type-color': `var(--type-${item.type})` }">
       <img
-        v-if="item.cover_url"
-        :src="item.cover_url"
+        v-if="cover && !imageFailed"
+        :src="cover"
+        @error="imageFailed = true"
         :alt="`Couverture de ${item.title}`"
         loading="lazy"
         decoding="async"
@@ -41,7 +53,11 @@ const initials = computed(() =>
         <BaseIcon :name="typeIcon" :size="14" />
       </span>
 
-      <span v-if="item.active_loan" class="cover__loan" :title="`Prêté à ${item.active_loan.borrower_name}`">
+      <span
+        v-if="item.active_loan"
+        class="cover__loan"
+        :title="`Prêté à ${item.active_loan.borrower_name}`"
+      >
         <BaseIcon name="users" :size="13" />
       </span>
 
@@ -53,7 +69,7 @@ const initials = computed(() =>
       <span v-if="item.creator" class="creator subtle">{{ item.creator }}</span>
       <RatingStars v-if="item.rating" :model-value="item.rating" :size="13" />
     </div>
-  </RouterLink>
+  </component>
 </template>
 
 <style scoped>
@@ -64,7 +80,7 @@ const initials = computed(() =>
   color: var(--text);
   transition: transform var(--dur) var(--ease-out);
 }
-.item-card:hover {
+.item-card:not(.item-card--readonly):hover {
   transform: translateY(-4px);
 }
 .cover {
@@ -76,7 +92,7 @@ const initials = computed(() =>
   border: 1px solid var(--border);
   box-shadow: var(--shadow-1);
 }
-.item-card:hover .cover {
+.item-card:not(.item-card--readonly):hover .cover {
   box-shadow: var(--shadow-2);
 }
 .cover__img {
