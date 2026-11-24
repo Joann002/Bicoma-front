@@ -1,20 +1,17 @@
 import { ref } from 'vue'
-
+import { readStorage, writeStorage } from '@/lib/storage'
 type Theme = 'dark' | 'light'
-const THEME_KEY = 'bicoma_theme'
-
-const theme = ref<Theme>((localStorage.getItem(THEME_KEY) as Theme) ?? 'dark')
-
+const KEY = 'bicoma_theme',
+  stored = readStorage(KEY),
+  theme = ref<Theme>(stored === 'light' ? 'light' : 'dark')
 function apply(value: Theme) {
-  document.documentElement.setAttribute('data-theme', value)
+  if (typeof document !== 'undefined') document.documentElement.setAttribute('data-theme', value)
 }
-
 apply(theme.value)
-
 export function useTheme() {
   function toggle() {
     theme.value = theme.value === 'dark' ? 'light' : 'dark'
-    localStorage.setItem(THEME_KEY, theme.value)
+    writeStorage(KEY, theme.value)
     apply(theme.value)
   }
   return { theme, toggle }
