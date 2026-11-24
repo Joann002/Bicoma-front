@@ -31,7 +31,11 @@ const router = createRouter({
       meta: { auth: true },
       children: [
         { path: '', name: 'shelf', component: () => import('@/views/ShelfView.vue') },
-        { path: 'items/new', name: 'item-new', component: () => import('@/views/ItemFormView.vue') },
+        {
+          path: 'items/new',
+          name: 'item-new',
+          component: () => import('@/views/ItemFormView.vue'),
+        },
         {
           path: 'items/:id',
           name: 'item-detail',
@@ -59,9 +63,14 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const authed = !!getStoredToken()
-  if (to.meta.auth && !authed) return { name: 'login' }
+  if (to.meta.auth && !authed)
+    return { name: 'login', query: to.fullPath === '/' ? {} : { next: to.fullPath } }
   if (to.meta.guest && authed) return { name: 'shelf' }
   return true
+})
+
+router.afterEach((to) => {
+  document.title = `${({ shelf: 'Étagère', login: 'Connexion', register: 'Inscription', 'item-new': 'Ajouter un élément', 'item-detail': 'Détail', 'item-edit': 'Modifier un élément', loans: 'Prêts', stats: 'Statistiques', shared: 'Listes partagées', 'public-list': 'Liste publique', recommendations: 'Pour vous', import: 'Importer' } as Record<string, string>)[String(to.name)] ?? 'Collection'} · Bicoma`
 })
 
 export default router
