@@ -1,57 +1,88 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useItemsStore } from '@/stores/items'
 import { useTagsStore } from '@/stores/tags'
 import { TYPE_LABELS, STATUS_LABELS } from '@/lib/types'
-import type { ItemFilters, ItemType, ItemStatus } from '@/lib/types'
+import type { ItemType, ItemStatus } from '@/lib/types'
+import { readItemQuery, itemQuery } from '@/lib/itemQuery'
+import { downloadCsv } from '@/lib/csv'
+import { errorMessage } from '@/lib/errors'
 import ItemCard from '@/components/ItemCard.vue'
 import BaseIcon from '@/components/BaseIcon.vue'
-
-const store = useItemsStore()
-const tagsStore = useTagsStore()
-
-const filters = reactive<ItemFilters>({ type: '', status: '', rating: '', q: '', tags: [], page: 1 })
-const searchInput = ref('')
-let debounce: ReturnType<typeof setTimeout>
-
-const types: ItemType[] = ['book', 'movie', 'series', 'game']
-const statuses: ItemStatus[] = ['wishlist', 'in_progress', 'done', 'abandoned']
-
-function load() {
-  store.fetch(filters)
+import ErrorNotice from '@/components/ErrorNotice.vue'
+import PageControls from '@/components/PageControls.vue'
+const store = useItemsStore(),
+  tagsStore = useTagsStore(),
+  route = useRoute(),
+  router = useRouter()
+const filters = computed(() => readItemQuery(route.query)),
+  searchInput = ref(filters.value.q ?? ''),
+  exportError = ref<string | null>(null)
+const activeFilters = computed(() =>
+  Boolean(
+    filters.value.type ||
+    filters.value.status ||
+    filters.value.rating ||
+    filters.value.q ||
+    filters.value.tags?.length,
+  ),
+)
+const types: ItemType[] = ['book', 'movie', 'series', 'game'],
+  statuses: ItemStatus[] = ['wishlist', 'in_progress', 'done', 'abandoned']
+let debounce: ReturnType<typeof setTimeout> | undefined
+async function load() {
+  const current = filters.value
+  exportError.value = null
+  const ok = await store.fetch(current)
+  if (ok && store.page !== current.page)
+    void router.replace({ query: itemQuery({ ...current, page: store.page }) })
 }
-
-watch(searchInput, (val) => {
+function setFilter(key: string, value: unknown) {
+  void router.push({ query: itemQuery({ ...filters.value, [key]: value, page: 1 }) })
+}
+function selectFilter(key: string, event: Event) {
+  setFilter(key, (event.target as HTMLSelectElement).value)
+}
+function toggleTag(name: string) {
+  const tags = filters.value.tags ?? []
+  setFilter('tags', tags.includes(name) ? tags.filter((tag) => tag !== name) : [...tags, name])
+}
+function changePage(page: number) {
+  void router.push({ query: itemQuery({ ...filters.value, page }) })
+}
+function reset() {
+  void router.push({ query: {} })
+}
+function exportPage() {
+  try {
+    downloadCsv(store.items)
+  } catch (error) {
+    exportError.value = errorMessage(error)
+  }
+}
+watch(searchInput, (value) => {
   clearTimeout(debounce)
+  if (value === (filters.value.q ?? '')) return
   debounce = setTimeout(() => {
-    filters.q = val
-    filters.page = 1
-    load()
+    void router.replace({ query: itemQuery({ ...filters.value, q: value, page: 1 }) })
   }, 300)
 })
-
 watch(
-  () => [filters.type, filters.status, filters.rating, filters.tags?.join(',')],
+  () => route.fullPath,
   () => {
-    filters.page = 1
-    load()
+    clearTimeout(debounce)
+    searchInput.value = filters.value.q ?? ''
+    void load()
   },
+  { immediate: true },
 )
-
-function toggleTag(name: string) {
-  const list = filters.tags ?? []
-  filters.tags = list.includes(name) ? list.filter((t) => t !== name) : [...list, name]
-}
-
-function changePage(p: number) {
-  filters.page = p
-  load()
-}
-
 onMounted(() => {
-  load()
-  tagsStore.fetch()
+  void tagsStore.fetch()
+})
+onScopeDispose(() => {
+  clearTimeout(debounce)
+  store.cancel()
 })
 </script>
 
@@ -60,95 +91,134 @@ onMounted(() => {
     <header class="page-head">
       <div>
         <h1>Étagère</h1>
-        <p class="muted">{{ store.total }} élément{{ store.total > 1 ? 's' : '' }} dans votre collection</p>
+        <p class="muted" role="status">
+          {{
+            store.loading
+              ? 'Chargement de votre collection…'
+              : store.error
+                ? 'Votre collection personnelle'
+                : `${store.total} élément${store.total > 1 ? 's' : ''} dans votre collection`
+          }}
+        </p>
       </div>
       <div class="page-head__actions">
-        <RouterLink :to="{ name: 'import' }" class="btn btn--ghost">
-          <BaseIcon name="search" :size="18" /> Importer
-        </RouterLink>
-        <RouterLink :to="{ name: 'item-new' }" class="btn btn--primary">
-          <BaseIcon name="plus" :size="18" /> Ajouter
-        </RouterLink>
+        <button
+          type="button"
+          class="btn btn--ghost"
+          :disabled="store.loading || !!store.error || !store.items.length"
+          @click="exportPage"
+        >
+          Exporter cette page (CSV)</button
+        ><RouterLink :to="{ name: 'import' }" class="btn btn--ghost"
+          ><BaseIcon name="search" :size="18" />Importer</RouterLink
+        ><RouterLink :to="{ name: 'item-new' }" class="btn btn--primary"
+          ><BaseIcon name="plus" :size="18" />Ajouter</RouterLink
+        >
       </div>
     </header>
-
     <div class="toolbar">
       <div class="search">
-        <BaseIcon name="search" :size="18" />
-        <input
+        <BaseIcon name="search" :size="18" /><input
           v-model="searchInput"
           class="search__input"
           type="search"
+          maxlength="200"
           placeholder="Rechercher un titre, un auteur…"
           aria-label="Rechercher"
         />
       </div>
-      <select v-model="filters.type" class="select" aria-label="Type">
+      <select
+        :value="filters.type"
+        class="select"
+        aria-label="Type"
+        @change="selectFilter('type', $event)"
+      >
         <option value="">Tous les types</option>
-        <option v-for="t in types" :key="t" :value="t">{{ TYPE_LABELS[t] }}</option>
-      </select>
-      <select v-model="filters.status" class="select" aria-label="Statut">
+        <option v-for="type in types" :key="type" :value="type">
+          {{ TYPE_LABELS[type] }}
+        </option></select
+      ><select
+        :value="filters.status"
+        class="select"
+        aria-label="Statut"
+        @change="selectFilter('status', $event)"
+      >
         <option value="">Tous les statuts</option>
-        <option v-for="s in statuses" :key="s" :value="s">{{ STATUS_LABELS[s] }}</option>
-      </select>
-      <select v-model="filters.rating" class="select" aria-label="Note minimale">
+        <option v-for="status in statuses" :key="status" :value="status">
+          {{ STATUS_LABELS[status] }}
+        </option></select
+      ><select
+        :value="filters.rating"
+        class="select"
+        aria-label="Note minimale"
+        @change="selectFilter('rating', $event)"
+      >
         <option value="">Toutes les notes</option>
         <option v-for="n in [5, 4, 3, 2, 1]" :key="n" :value="n">{{ n }}★ et +</option>
       </select>
     </div>
-
     <div v-if="tagsStore.tags.length" class="tag-row">
       <button
         v-for="tag in tagsStore.tags"
         :key="tag.id"
+        type="button"
         class="tag-toggle"
         :class="{ 'tag-toggle--on': filters.tags?.includes(tag.name) }"
+        :aria-pressed="filters.tags?.includes(tag.name) ?? false"
         @click="toggleTag(tag.name)"
       >
         {{ tag.name }}
       </button>
     </div>
-
-    <!-- Loading skeletons -->
-    <div v-if="store.loading" class="grid">
-      <div v-for="n in 12" :key="n" class="skel-card">
+    <button v-if="activeFilters" type="button" class="btn btn--ghost" @click="reset">
+      Réinitialiser les filtres
+    </button>
+    <ErrorNotice
+      v-if="tagsStore.error"
+      :message="tagsStore.error"
+      retry
+      @retry="tagsStore.fetch()"
+    />
+    <ErrorNotice v-if="exportError" :message="exportError" />
+    <p v-if="store.items.length && !store.loading && !store.error" class="subtle">
+      Le CSV contient uniquement les {{ store.items.length }} éléments de cette page et vos notes
+      personnelles.
+    </p>
+    <div v-if="store.loading" class="grid" aria-label="Chargement des éléments" aria-busy="true">
+      <div v-for="n in 12" :key="n" class="skel-card" aria-hidden="true">
         <div class="skeleton skel-cover"></div>
         <div class="skeleton skel-line"></div>
-        <div class="skeleton skel-line skel-line--short"></div>
       </div>
     </div>
-
-    <!-- Empty state -->
+    <ErrorNotice v-else-if="store.error" :message="store.error" retry @retry="load" />
     <div v-else-if="!store.items.length" class="empty">
       <BaseIcon name="library" :size="48" />
-      <h2>Votre étagère est vide</h2>
-      <p class="muted">Ajoutez votre premier titre ou importez-le depuis une API externe.</p>
-      <RouterLink :to="{ name: 'item-new' }" class="btn btn--primary">
-        <BaseIcon name="plus" :size="18" /> Ajouter un élément
-      </RouterLink>
+      <h2>{{ activeFilters ? 'Aucun résultat' : 'Votre étagère est vide' }}</h2>
+      <p class="muted">
+        {{
+          activeFilters
+            ? 'Modifiez vos filtres ou votre recherche.'
+            : 'Ajoutez votre premier titre à votre collection.'
+        }}
+      </p>
+      <button v-if="activeFilters" type="button" class="btn btn--primary" @click="reset">
+        Effacer les filtres</button
+      ><RouterLink v-else :to="{ name: 'item-new' }" class="btn btn--primary"
+        >Ajouter un élément</RouterLink
+      >
     </div>
-
-    <!-- Grid -->
     <div v-else class="grid">
       <ItemCard v-for="item in store.items" :key="item.id" :item="item" />
     </div>
-
-    <nav v-if="store.lastPage > 1" class="pager" aria-label="Pagination">
-      <button class="btn btn--sm" :disabled="store.page <= 1" @click="changePage(store.page - 1)">
-        Précédent
-      </button>
-      <span class="muted">Page {{ store.page }} / {{ store.lastPage }}</span>
-      <button
-        class="btn btn--sm"
-        :disabled="store.page >= store.lastPage"
-        @click="changePage(store.page + 1)"
-      >
-        Suivant
-      </button>
-    </nav>
+    <PageControls
+      v-if="!store.error"
+      :page="store.page"
+      :last-page="store.lastPage"
+      :loading="store.loading"
+      @change="changePage"
+    />
   </div>
 </template>
-
 <style scoped>
 .shelf {
   display: flex;
