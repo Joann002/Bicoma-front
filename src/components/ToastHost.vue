@@ -7,9 +7,15 @@ const icons = { success: 'check', error: 'close', info: 'sparkles' } as const
 </script>
 
 <template>
-  <div class="toast-host" aria-live="polite" aria-atomic="true">
+  <div class="toast-host" aria-live="polite" aria-atomic="false">
     <TransitionGroup name="toast">
-      <div v-for="t in toasts" :key="t.id" class="toast" :class="`toast--${t.type}`" role="status">
+      <div
+        v-for="t in toasts"
+        :key="t.id"
+        class="toast"
+        :class="`toast--${t.type}`"
+        :role="t.type === 'error' ? 'alert' : 'status'"
+      >
         <BaseIcon :name="icons[t.type]" :size="16" />
         <span>{{ t.message }}</span>
         <button class="toast__close" aria-label="Fermer" @click="dismiss(t.id)">
@@ -40,7 +46,8 @@ const icons = { success: 'check', error: 'close', info: 'sparkles' } as const
   border-left: 3px solid var(--accent);
   border-radius: var(--radius);
   box-shadow: var(--shadow-3);
-  max-width: 340px;
+  max-width: min(340px, calc(100vw - 32px));
+  overflow-wrap: anywhere;
   font-size: var(--text-sm);
 }
 .toast--success {
@@ -50,6 +57,9 @@ const icons = { success: 'check', error: 'close', info: 'sparkles' } as const
   border-left-color: var(--danger);
 }
 .toast__close {
+  flex-shrink: 0;
+  min-width: 28px;
+  min-height: 28px;
   margin-left: auto;
   background: none;
   border: none;

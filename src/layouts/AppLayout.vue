@@ -1,14 +1,33 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { RouterView, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
+import ErrorNotice from '@/components/ErrorNotice.vue'
+import { useModalFocus } from '@/composables/useModalFocus'
 import BaseIcon from '@/components/BaseIcon.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
 const { theme, toggle } = useTheme()
 const mobileOpen = ref(false)
+const signingOut = ref(false)
+const panel = ref<HTMLElement | null>(null),
+  mobile = ref(window.innerWidth <= 860)
+useModalFocus(mobileOpen, panel)
+watch(
+  () => router.currentRoute.value.fullPath,
+  () => {
+    mobileOpen.value = false
+  },
+)
+function resize() {
+  mobile.value = window.innerWidth <= 860
+  if (!mobile.value) mobileOpen.value = false
+}
+window.addEventListener('resize', resize)
+import { onScopeDispose } from 'vue'
+onScopeDispose(() => window.removeEventListener('resize', resize))
 
 const links = [
   { to: { name: 'shelf' }, icon: 'library', label: 'Étagère' },
@@ -19,27 +38,59 @@ const links = [
   { to: { name: 'shared' }, icon: 'share', label: 'Listes partagées' },
 ] as const
 
-onMounted(() => auth.fetchMe())
+onMounted(() => {
+  if (!auth.ready) void auth.fetchMe()
+})
 
 async function handleLogout() {
-  await auth.logout()
-  router.push({ name: 'login' })
+  if (signingOut.value) return
+  signingOut.value = true
+  try {
+    await auth.logout()
+  } finally {
+    signingOut.value = false
+  }
 }
 </script>
 
 <template>
   <div class="app">
-    <button class="menu-toggle" aria-label="Menu" @click="mobileOpen = !mobileOpen">
+    <a href="#main-content" class="skip-link">Aller au contenu</a>
+    <button
+      class="menu-toggle"
+      aria-label="Menu"
+      aria-controls="main-navigation"
+      :aria-expanded="mobileOpen"
+      @click="mobileOpen = !mobileOpen"
+    >
       <BaseIcon :name="mobileOpen ? 'close' : 'grid'" />
     </button>
 
-    <aside class="sidebar" :class="{ 'sidebar--open': mobileOpen }">
+    <aside
+      id="main-navigation"
+      ref="panel"
+      class="sidebar"
+      tabindex="-1"
+      :inert="mobile && !mobileOpen"
+      :role="mobile && mobileOpen ? 'dialog' : undefined"
+      :aria-modal="mobile && mobileOpen ? true : undefined"
+      aria-label="Navigation principale"
+      :class="{ 'sidebar--open': mobileOpen }"
+    >
+      <button
+        v-if="mobile && mobileOpen"
+        class="btn btn--ghost"
+        type="button"
+        @click="mobileOpen = false"
+      >
+        Fermer le menu
+      </button>
       <div class="brand">
         <BaseIcon name="library" :size="26" />
         <span>Bicoma</span>
       </div>
 
-      <nav class="nav" @click="mobileOpen = false">
+      <nav aria-label="Navigation principale" class="nav" @click="mobileOpen = false">
         <RouterLink v-for="l in links" :key="l.label" :to="l.to" class="nav__link">
           <BaseIcon :name="l.icon" :size="18" />
           <span>{{ l.label }}</span>
@@ -57,21 +108,25 @@ async function handleLogout() {
             <strong>{{ auth.user?.name ?? '…' }}</strong>
             <span class="subtle">{{ auth.user?.email }}</span>
           </div>
-          <button class="icon-btn" aria-label="Se déconnecter" @click="handleLogout">
+          <button
+            class="icon-btn"
+            aria-label="Se déconnecter"
+            :disabled="signingOut"
+            @click="handleLogout"
+          >
             <BaseIcon name="logout" :size="18" />
           </button>
         </div>
       </div>
     </aside>
 
-    <div
-      v-if="mobileOpen"
-      class="scrim"
-      @click="mobileOpen = false"
-      aria-hidden="true"
-    ></div>
+    <div v-if="mobileOpen" class="scrim" @click="mobileOpen = false" aria-hidden="true"></div>
 
-    <main class="content">
+    <main id="main-content" tabindex="-1" class="content" :inert="mobile && mobileOpen">
+      <ErrorNotice v-if="auth.error" :message="auth.error" retry @retry="auth.fetchMe()" />
+      <p v-if="auth.volatile" role="status" class="session-note">
+        Le stockage est indisponible : cette session sera perdue au rechargement.
+      </p>
       <RouterView v-slot="{ Component }">
         <Transition name="fade" mode="out-in">
           <component :is="Component" />

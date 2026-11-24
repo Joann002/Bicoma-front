@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { api } from '@/lib/api'
 import { useItemsStore } from '@/stores/items'
@@ -7,6 +7,11 @@ import { useLoansStore } from '@/stores/loans'
 import { useToast } from '@/composables/useToast'
 import { TYPE_LABELS, STATUS_LABELS } from '@/lib/types'
 import type { Item } from '@/lib/types'
+import { latestRequest } from '@/lib/latestRequest'
+import { errorMessage, isCancelled } from '@/lib/errors'
+import { positiveInteger } from '@/lib/itemQuery'
+import { safeCoverUrl } from '@/lib/urls'
+import ErrorNotice from '@/components/ErrorNotice.vue'
 import BaseIcon from '@/components/BaseIcon.vue'
 import RatingStars from '@/components/RatingStars.vue'
 
@@ -21,24 +26,55 @@ const loading = ref(true)
 const lendOpen = ref(false)
 const borrower = ref('')
 const returnDate = ref('')
+const loadError = ref<string | null>(null),
+  actionError = ref<string | null>(null),
+  pending = ref(false),
+  requests = latestRequest()
+const cover = computed(() => safeCoverUrl(item.value?.cover_url))
+let alive = true
+async function run(action: () => Promise<void>) {
+  if (pending.value) return
+  pending.value = true
+  actionError.value = null
+  try {
+    await action()
+  } catch (cause) {
+    if (alive) {
+      actionError.value = errorMessage(cause)
+    }
+  } finally {
+    if (alive) pending.value = false
+  }
+}
 
 const typeIcon = computed(
-  () => ({ book: 'book', movie: 'film', series: 'tv', game: 'gamepad' })[item.value?.type ?? 'book'],
+  () =>
+    ({ book: 'book', movie: 'film', series: 'tv', game: 'gamepad' })[item.value?.type ?? 'book'],
 )
 
 async function load() {
+  const request = requests.start()
   loading.value = true
+  loadError.value = null
+  item.value = null
   try {
-    item.value = await store.get(Number(route.params.id))
+    const id = positiveInteger(route.params.id, 0)
+    if (!id) throw new Error('Identifiant invalide.')
+    const result = await store.get(id, request.signal)
+    if (request.current()) item.value = result
+  } catch (cause) {
+    if (request.current() && !isCancelled(cause)) loadError.value = errorMessage(cause)
   } finally {
-    loading.value = false
+    if (request.current()) loading.value = false
   }
 }
 
 async function remove() {
   if (!item.value) return
   if (!confirm(`Supprimer « ${item.value.title} » ? Cette action est irréversible.`)) return
-  await store.remove(item.value.id)
+  const id = item.value.id
+  await store.remove(id)
+  if (!alive || item.value?.id !== id) return
   toast.success('Élément supprimé')
   router.push({ name: 'shelf' })
 }
@@ -50,6 +86,7 @@ async function lend() {
     borrower_name: borrower.value.trim(),
     return_date: returnDate.value || null,
   })
+  if (!alive) return
   lendOpen.value = false
   borrower.value = ''
   returnDate.value = ''
@@ -60,6 +97,7 @@ async function lend() {
 async function returnLoan() {
   if (!item.value?.active_loan) return
   await loans.markReturned(item.value.active_loan.id)
+  if (!alive) return
   toast.success('Retour enregistré')
   load()
 }
@@ -70,7 +108,19 @@ async function enrich() {
   toast.info('Enrichissement lancé en arrière-plan. Actualisez dans un instant.')
 }
 
-onMounted(load)
+watch(
+  () => route.params.id,
+  () => {
+    lendOpen.value = false
+    actionError.value = null
+    void load()
+  },
+  { immediate: true },
+)
+onScopeDispose(() => {
+  alive = false
+  requests.cancel()
+})
 </script>
 
 <template>
@@ -79,12 +129,13 @@ onMounted(load)
       <BaseIcon name="back" :size="18" /> Étagère
     </RouterLink>
 
-    <div v-if="loading" class="loading muted">Chargement…</div>
+    <div v-if="loading" class="loading muted" role="status">Chargement…</div>
 
+    <ErrorNotice v-else-if="loadError" :message="loadError" retry @retry="load" />
     <div v-else-if="item" class="detail__body">
       <div class="cover-col">
         <div class="cover">
-          <img v-if="item.cover_url" :src="item.cover_url" :alt="`Couverture de ${item.title}`" />
+          <img v-if="cover" :src="cover" :alt="`Couverture de ${item.title}`" />
           <div v-else class="cover__placeholder">
             <BaseIcon :name="typeIcon" :size="48" />
           </div>
@@ -93,15 +144,18 @@ onMounted(load)
           <RouterLink :to="{ name: 'item-edit', params: { id: item.id } }" class="btn btn--ghost">
             <BaseIcon name="edit" :size="16" /> Modifier
           </RouterLink>
-          <button class="btn btn--danger" @click="remove">
+          <button class="btn btn--danger" :disabled="pending" @click="run(remove)">
             <BaseIcon name="trash" :size="16" /> Supprimer
           </button>
         </div>
       </div>
 
       <div class="info">
+        <ErrorNotice v-if="actionError" :message="actionError" />
         <div class="badges">
-          <span class="badge"><BaseIcon :name="typeIcon" :size="14" /> {{ TYPE_LABELS[item.type] }}</span>
+          <span class="badge"
+            ><BaseIcon :name="typeIcon" :size="14" /> {{ TYPE_LABELS[item.type] }}</span
+          >
           <span class="badge">{{ STATUS_LABELS[item.status] }}</span>
           <span v-if="item.genre" class="badge">{{ item.genre }}</span>
         </div>
@@ -135,14 +189,19 @@ onMounted(load)
                 <span v-if="item.active_loan.overdue" class="overdue"> · en retard</span>
               </p>
             </div>
-            <button class="btn btn--sm btn--primary" @click="returnLoan">
+            <button class="btn btn--sm btn--primary" :disabled="pending" @click="run(returnLoan)">
               <BaseIcon name="check" :size="16" /> Marquer rendu
             </button>
           </div>
           <div v-else-if="lendOpen" class="lend-form">
             <div class="field">
               <label for="borrower">Prêter à</label>
-              <input id="borrower" v-model="borrower" class="input" placeholder="Nom de l'emprunteur" />
+              <input
+                id="borrower"
+                v-model="borrower"
+                class="input"
+                placeholder="Nom de l'emprunteur"
+              />
             </div>
             <div class="field">
               <label for="return">Retour prévu</label>
@@ -150,7 +209,11 @@ onMounted(load)
             </div>
             <div class="lend-form__actions">
               <button class="btn btn--sm btn--ghost" @click="lendOpen = false">Annuler</button>
-              <button class="btn btn--sm btn--primary" :disabled="!borrower.trim()" @click="lend">
+              <button
+                class="btn btn--sm btn--primary"
+                :disabled="pending || !borrower.trim()"
+                @click="run(lend)"
+              >
                 Enregistrer le prêt
               </button>
             </div>
@@ -160,8 +223,15 @@ onMounted(load)
           </button>
         </section>
 
-        <button v-if="item.external_id" class="enrich-link" @click="enrich">
-          <BaseIcon name="download" :size="14" /> Recharger les métadonnées ({{ item.external_source }})
+        <button
+          v-if="item.external_id"
+          class="enrich-link"
+          :disabled="pending"
+          @click="run(enrich)"
+        >
+          <BaseIcon name="download" :size="14" /> Recharger les métadonnées ({{
+            item.external_source
+          }})
         </button>
       </div>
     </div>

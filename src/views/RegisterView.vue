@@ -4,7 +4,7 @@ import { useRouter, RouterLink } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import BaseIcon from '@/components/BaseIcon.vue'
-import { AxiosError } from 'axios'
+import { errorMessage, validationErrors } from '@/lib/errors'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -15,6 +15,7 @@ const loading = ref(false)
 const errors = ref<Record<string, string[]>>({})
 
 async function submit() {
+  if (loading.value) return
   errors.value = {}
   loading.value = true
   try {
@@ -22,11 +23,8 @@ async function submit() {
     toast.success('Compte créé. Bienvenue !')
     router.push({ name: 'shelf' })
   } catch (e) {
-    const err = e as AxiosError<{ errors?: Record<string, string[]>; message?: string }>
-    errors.value = err.response?.data?.errors ?? {}
-    if (!Object.keys(errors.value).length) {
-      toast.error(err.response?.data?.message ?? 'Inscription impossible.')
-    }
+    errors.value = validationErrors(e)
+    if (!Object.keys(errors.value).length) toast.error(errorMessage(e))
   } finally {
     loading.value = false
   }
@@ -43,15 +41,29 @@ async function submit() {
       <h1>Créer votre bibliothèque</h1>
       <p class="muted">Quelques secondes et votre étagère est prête.</p>
 
-      <form @submit.prevent="submit" novalidate>
+      <form @submit.prevent="submit">
         <div class="field">
           <label for="name">Nom</label>
-          <input id="name" v-model="form.name" class="input" type="text" autocomplete="name" required />
+          <input
+            id="name"
+            v-model="form.name"
+            class="input"
+            type="text"
+            autocomplete="name"
+            required
+          />
           <span v-if="errors.name" class="field-error">{{ errors.name[0] }}</span>
         </div>
         <div class="field">
           <label for="email">Email</label>
-          <input id="email" v-model="form.email" class="input" type="email" autocomplete="email" required />
+          <input
+            id="email"
+            v-model="form.email"
+            class="input"
+            type="email"
+            autocomplete="email"
+            required
+          />
           <span v-if="errors.email" class="field-error">{{ errors.email[0] }}</span>
         </div>
         <div class="field">
@@ -96,9 +108,7 @@ async function submit() {
   display: grid;
   place-items: center;
   padding: var(--space-4);
-  background:
-    radial-gradient(1200px 600px at 70% -10%, var(--accent-soft), transparent),
-    var(--bg);
+  background: radial-gradient(1200px 600px at 70% -10%, var(--accent-soft), transparent), var(--bg);
 }
 .auth__card {
   width: 100%;

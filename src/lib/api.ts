@@ -1,42 +1,34 @@
 import axios from 'axios'
-
-const TOKEN_KEY = 'bicoma_token'
-
+import { sessionToken, setSessionToken, expireSession } from './session'
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api',
+  timeout: 20000,
   headers: { Accept: 'application/json' },
 })
-
-export function setToken(token: string | null) {
-  if (token) {
-    localStorage.setItem(TOKEN_KEY, token)
-    api.defaults.headers.common.Authorization = `Bearer ${token}`
-  } else {
-    localStorage.removeItem(TOKEN_KEY)
-    delete api.defaults.headers.common.Authorization
-  }
+export const getStoredToken = sessionToken
+export const setToken = setSessionToken
+const requestTokens = new WeakMap<object, string | null>()
+export function publicEndpoint(url: string | undefined): boolean {
+  return /^\/public\//.test(url ?? '')
 }
-
-export function getStoredToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
-}
-
-// Restaure le token au démarrage.
-const stored = getStoredToken()
-if (stored) {
-  api.defaults.headers.common.Authorization = `Bearer ${stored}`
-}
-
-// Déconnexion automatique sur 401 (hors page publique).
+api.interceptors.request.use((config) => {
+  const token = publicEndpoint(config.url) ? null : sessionToken()
+  if (token) config.headers.set('Authorization', `Bearer ${token}`)
+  else config.headers.delete('Authorization')
+  requestTokens.set(config, token)
+  return config
+})
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 && !window.location.pathname.startsWith('/share/')) {
-      setToken(null)
-      if (window.location.pathname !== '/login') {
-        window.location.assign('/login')
-      }
-    }
+    const config = error.config
+    if (
+      error.response?.status === 401 &&
+      config &&
+      !publicEndpoint(config.url) &&
+      !/^\/(?:login|register)$/.test(config.url ?? '')
+    )
+      expireSession(requestTokens.get(config) ?? null)
     return Promise.reject(error)
   },
 )

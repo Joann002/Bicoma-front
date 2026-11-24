@@ -1,30 +1,64 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ref, watch, onScopeDispose } from 'vue'
 import { useRoute } from 'vue-router'
+import { isAxiosError } from 'axios'
 import { api } from '@/lib/api'
+import { latestRequest } from '@/lib/latestRequest'
+import { errorMessage, isCancelled } from '@/lib/errors'
 import type { Item } from '@/lib/types'
 import ItemCard from '@/components/ItemCard.vue'
 import BaseIcon from '@/components/BaseIcon.vue'
-
-const route = useRoute()
-const loading = ref(true)
-const notFound = ref(false)
-const title = ref('')
-const owner = ref('')
-const items = ref<Item[]>([])
-
-onMounted(async () => {
+import ErrorNotice from '@/components/ErrorNotice.vue'
+const route = useRoute(),
+  requests = latestRequest(),
+  loading = ref(true),
+  notFound = ref(false),
+  error = ref<string | null>(null),
+  title = ref(''),
+  owner = ref(''),
+  items = ref<Item[]>([])
+async function load() {
+  const request = requests.start()
+  loading.value = true
+  notFound.value = false
+  error.value = null
+  items.value = []
+  title.value = ''
+  owner.value = ''
   try {
-    const { data } = await api.get(`/public/${route.params.token}`)
+    const token = String(route.params.token ?? '')
+    if (!token || token.length > 200) {
+      notFound.value = true
+      return
+    }
+    const { data } = await api.get(`/public/${encodeURIComponent(token)}`, {
+      signal: request.signal,
+    })
+    if (!request.current()) return
+    if (!data.data || !Array.isArray(data.data.items))
+      throw new Error('La réponse de la liste est invalide.')
     title.value = data.data.title
     owner.value = data.data.owner
     items.value = data.data.items
-  } catch {
-    notFound.value = true
+  } catch (cause) {
+    if (request.current() && !isCancelled(cause)) {
+      if (isAxiosError(cause) && cause.response?.status === 404) notFound.value = true
+      else if (isAxiosError(cause) && [401, 403].includes(cause.response?.status ?? 0))
+        error.value = 'Cette liste n’est pas accessible avec ce lien.'
+      else error.value = errorMessage(cause)
+    }
   } finally {
-    loading.value = false
+    if (request.current()) loading.value = false
   }
-})
+}
+watch(
+  () => route.params.token,
+  () => {
+    void load()
+  },
+  { immediate: true },
+)
+onScopeDispose(requests.cancel)
 </script>
 
 <template>
@@ -37,8 +71,9 @@ onMounted(async () => {
     </header>
 
     <main class="public__body">
-      <div v-if="loading" class="muted">Chargement…</div>
+      <div v-if="loading" class="muted" role="status">Chargement…</div>
 
+      <ErrorNotice v-else-if="error" :message="error" retry @retry="load" />
       <div v-else-if="notFound" class="empty">
         <BaseIcon name="close" :size="48" />
         <h1>Liste introuvable</h1>
@@ -52,7 +87,7 @@ onMounted(async () => {
         </div>
 
         <div v-if="items.length" class="grid">
-          <ItemCard v-for="item in items" :key="item.id" :item="item" />
+          <ItemCard v-for="item in items" :key="item.id" :item="item" read-only />
         </div>
         <p v-else class="muted">Cette liste est vide.</p>
       </template>
